@@ -1,0 +1,1 @@
+# stock-guard-for-woocommerce-subscriptions
