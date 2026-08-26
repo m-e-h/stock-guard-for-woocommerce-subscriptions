@@ -64,7 +64,7 @@ final class CustomerRenewalDelayed extends WC_Email {
 	 * @since 1.0.0
 	 */
 	public function get_default_heading() {
-		return __( 'Your subscription renewal is on hold', 'stock-guard-for-woocommerce-subscriptions' );
+		return __( 'Your subscription renewal is delayed', 'stock-guard-for-woocommerce-subscriptions' );
 	}
 
 	/**

@@ -35,7 +35,7 @@ $first_name = $subscription->get_billing_first_name();
 	<?php
 	printf(
 		/* translators: %s: subscription number. */
-		esc_html__( 'We could not process the renewal for subscription #%s because the following items are currently unavailable:', 'stock-guard-for-woocommerce-subscriptions' ),
+		esc_html__( 'We could not process the renewal for subscription #%s because the following items are currently out of stock:', 'stock-guard-for-woocommerce-subscriptions' ),
 		esc_html( $subscription->get_order_number() )
 	);
 	?>
@@ -50,7 +50,7 @@ $first_name = $subscription->get_billing_first_name();
 <?php endif; ?>
 
 <p>
-	<?php esc_html_e( 'The store did not create a renewal order for this attempt. We will retry automatically as soon as every item is available.', 'stock-guard-for-woocommerce-subscriptions' ); ?>
+	<?php esc_html_e( 'The store did not create a renewal order for this attempt. We will retry automatically once all items are back in stock, which we expect to be soon.', 'stock-guard-for-woocommerce-subscriptions' ); ?>
 </p>
 
 <p>
