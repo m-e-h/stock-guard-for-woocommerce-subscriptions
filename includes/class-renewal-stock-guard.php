@@ -13,6 +13,7 @@ use Throwable;
 use WC_Order;
 use WC_Product;
 use WC_Subscription;
+use WC_Subscriptions_Core_Plugin;
 use WC_Subscriptions_Manager;
 use WC_Subscriptions_Payment_Gateways;
 use WP_Error;
@@ -27,9 +28,14 @@ final class RenewalStockGuard {
 	private const ACTION_GROUP           = 'stock_guard_for_woocommerce_subscriptions';
 	private const EMAIL_ACTION           = 'sgfws_subscription_renewal_delayed_notification';
 	private const LOG_SOURCE             = 'stock-guard-for-woocommerce-subscriptions';
+	private const MAX_RECOVERY_ATTEMPTS  = 3;
 	private const META_BLOCKED_AT        = '_sgfws_renewal_blocked_at';
+	private const META_RECOVERY_ATTEMPTS = '_sgfws_recovery_attempts';
 	private const META_UNAVAILABLE_ITEMS = '_sgfws_unavailable_items';
 	private const RECOVERY_ACTION        = 'sgfws_process_stock_recovered_renewal';
+	private const RECOVERY_RETRY_DELAY   = 300;
+	private const STATUS_DELAYED         = 'delayed';
+	private const STATUS_DELAYED_KEY     = 'wc-delayed';
 
 	/**
 	 * Whether the core renewal preparation callback was removed for the current action.
@@ -58,6 +64,13 @@ final class RenewalStockGuard {
 	 * @since 1.0.0
 	 */
 	public function register_hooks() {
+		add_filter( 'woocommerce_register_shop_order_post_statuses', array( $this, 'register_delayed_post_status' ) );
+		add_filter( 'wcs_subscription_statuses', array( $this, 'register_delayed_subscription_status' ) );
+		add_filter( 'woocommerce_can_subscription_be_updated_to_delayed', array( $this, 'allow_transition_to_delayed' ), 10, 2 );
+		add_filter( 'woocommerce_can_subscription_be_updated_to_on-hold', array( $this, 'allow_delayed_transition_to_on_hold' ), 10, 2 );
+		add_filter( 'woocommerce_can_subscription_be_updated_to_active', array( $this, 'allow_recovered_transition_to_active' ), 10, 2 );
+		add_filter( 'woocommerce_subscriptions_gateway_status_updated_hook_prefix', array( $this, 'map_delayed_gateway_status_hook' ), 10, 3 );
+		add_action( 'woocommerce_subscription_status_delayed', array( $this, 'handle_subscription_delayed' ) );
 		add_action( 'woocommerce_scheduled_subscription_payment', array( $this, 'handle_scheduled_subscription_payment' ), 0, 1 );
 		add_action( 'woocommerce_product_set_stock', array( $this, 'handle_product_stock_change' ), 20, 1 );
 		add_action( 'woocommerce_variation_set_stock', array( $this, 'handle_product_stock_change' ), 20, 1 );
@@ -66,6 +79,151 @@ final class RenewalStockGuard {
 		add_action( 'woocommerce_product_object_updated_props', array( $this, 'handle_product_object_updated_props' ), 20, 2 );
 		add_action( self::RECOVERY_ACTION, array( $this, 'handle_recovery_action' ), 10, 1 );
 		add_action( 'woocommerce_subscription_status_updated', array( $this, 'handle_subscription_status_updated' ), 20, 3 );
+	}
+
+	/**
+	 * Register the delayed post status with WooCommerce.
+	 *
+	 * @internal
+	 *
+	 * @param array<string,array<string,mixed>> $post_statuses Registered order post statuses.
+	 * @return array<string,array<string,mixed>>
+	 */
+	public function register_delayed_post_status( $post_statuses ) {
+		$post_statuses[ self::STATUS_DELAYED_KEY ] = array(
+			'label'                     => _x( 'Delayed', 'Subscription status', 'stock-guard-for-woocommerce-subscriptions' ),
+			'public'                    => false,
+			'exclude_from_search'       => false,
+			'show_in_admin_all_list'    => true,
+			'show_in_admin_status_list' => true,
+			/* translators: %s: number of subscriptions. */
+			'label_count'               => _n_noop( 'Delayed <span class="count">(%s)</span>', 'Delayed <span class="count">(%s)</span>', 'stock-guard-for-woocommerce-subscriptions' ),
+		);
+
+		return $post_statuses;
+	}
+
+	/**
+	 * Add delayed to the statuses available to subscriptions.
+	 *
+	 * @internal
+	 *
+	 * @param array<string,string> $subscription_statuses Registered subscription statuses.
+	 * @return array<string,string>
+	 */
+	public function register_delayed_subscription_status( $subscription_statuses ) {
+		$subscription_statuses[ self::STATUS_DELAYED_KEY ] = _x( 'Delayed', 'Subscription status', 'stock-guard-for-woocommerce-subscriptions' );
+
+		return $subscription_statuses;
+	}
+
+	/**
+	 * Use the gateway's suspension hook while retaining the delayed status.
+	 *
+	 * @internal
+	 *
+	 * @param string          $hook_prefix  Gateway status hook prefix.
+	 * @param WC_Subscription $subscription Subscription object.
+	 * @param string          $new_status   New subscription status.
+	 * @return string
+	 */
+	public function map_delayed_gateway_status_hook( $hook_prefix, $subscription, $new_status ) {
+		if ( $subscription instanceof WC_Subscription && self::STATUS_DELAYED === $new_status ) {
+			return 'woocommerce_subscription_on-hold_';
+		}
+
+		return $hook_prefix;
+	}
+
+	/**
+	 * Allow an active subscription to be delayed by the stock guard.
+	 *
+	 * @internal
+	 *
+	 * @param bool            $can_be_updated Whether the transition is currently allowed.
+	 * @param WC_Subscription $subscription   Subscription object.
+	 * @return bool
+	 */
+	public function allow_transition_to_delayed( $can_be_updated, $subscription ) {
+		return $can_be_updated || (
+			$subscription instanceof WC_Subscription
+			&& $subscription->has_status( array( 'active', 'on-hold' ) )
+			&& $subscription->get_meta( self::META_BLOCKED_AT, true )
+		);
+	}
+
+	/**
+	 * Allow recovery to hand a delayed subscription back to the core renewal flow.
+	 *
+	 * @internal
+	 *
+	 * @param bool            $can_be_updated Whether the transition is currently allowed.
+	 * @param WC_Subscription $subscription   Subscription object.
+	 * @return bool
+	 */
+	public function allow_delayed_transition_to_on_hold( $can_be_updated, $subscription ) {
+		return $can_be_updated || ( $subscription instanceof WC_Subscription && $subscription->has_status( self::STATUS_DELAYED ) );
+	}
+
+	/**
+	 * Allow a successfully recovered subscription to return to active.
+	 *
+	 * @internal
+	 *
+	 * @param bool            $can_be_updated Whether the transition is currently allowed.
+	 * @param WC_Subscription $subscription   Subscription object.
+	 * @return bool
+	 */
+	public function allow_recovered_transition_to_active( $can_be_updated, $subscription ) {
+		return $can_be_updated || (
+			$subscription instanceof WC_Subscription
+			&& $subscription->has_status( array( self::STATUS_DELAYED, 'on-hold' ) )
+			&& isset( $this->recovering_subscription_ids[ $subscription->get_id() ] )
+		);
+	}
+
+	/**
+	 * Pause core subscription events and notifications while renewal is delayed.
+	 *
+	 * @internal
+	 *
+	 * @param WC_Subscription $subscription Subscription object.
+	 */
+	public function handle_subscription_delayed( $subscription ) {
+		if ( ! $subscription instanceof WC_Subscription ) {
+			return;
+		}
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			$action_args  = array( 'subscription_id' => $subscription->get_id() );
+			$action_hooks = array(
+				'woocommerce_scheduled_subscription_trial_end',
+				'woocommerce_scheduled_subscription_payment',
+				'woocommerce_scheduled_subscription_expiration',
+				'woocommerce_scheduled_subscription_end_of_prepaid_term',
+			);
+
+			foreach ( $action_hooks as $action_hook ) {
+				as_unschedule_all_actions( $action_hook, $action_args );
+			}
+
+			$last_renewal_order_id = absint( $subscription->get_last_order( 'ids', 'renewal' ) );
+
+			if ( $last_renewal_order_id ) {
+				as_unschedule_all_actions(
+					'woocommerce_scheduled_subscription_payment_retry',
+					array( 'order_id' => $last_renewal_order_id )
+				);
+			}
+		}
+
+		if ( class_exists( WC_Subscriptions_Core_Plugin::class ) ) {
+			$core_plugin = WC_Subscriptions_Core_Plugin::instance();
+
+			if ( is_callable( array( $core_plugin->notifications_scheduler, 'unschedule_all_notifications' ) ) ) {
+				$core_plugin->notifications_scheduler->unschedule_all_notifications( $subscription );
+			}
+		}
 	}
 
 	/**
@@ -89,7 +247,7 @@ final class RenewalStockGuard {
 		}
 
 		if ( $subscription->get_meta( self::META_BLOCKED_AT, true ) ) {
-			if ( ! $subscription->has_status( array( 'active', 'on-hold' ) ) ) {
+			if ( ! $subscription->has_status( array( 'active', self::STATUS_DELAYED, 'on-hold' ) ) ) {
 				return;
 			}
 
@@ -99,6 +257,7 @@ final class RenewalStockGuard {
 			if ( empty( $unavailable_items ) ) {
 				$this->queue_recovery_action( $subscription_id );
 			} else {
+				$subscription->delete_meta_data( self::META_RECOVERY_ATTEMPTS );
 				$subscription->update_meta_data( self::META_UNAVAILABLE_ITEMS, $unavailable_items );
 				$subscription->save();
 			}
@@ -119,6 +278,7 @@ final class RenewalStockGuard {
 
 		$items_list = implode( ', ', $unavailable_items );
 
+		$subscription->delete_meta_data( self::META_RECOVERY_ATTEMPTS );
 		$subscription->update_meta_data( self::META_BLOCKED_AT, gmdate( 'Y-m-d H:i:s' ) );
 		$subscription->update_meta_data( self::META_UNAVAILABLE_ITEMS, $unavailable_items );
 
@@ -129,8 +289,8 @@ final class RenewalStockGuard {
 		);
 
 		try {
-			if ( $subscription->can_be_updated_to( 'on-hold' ) ) {
-				$subscription->update_status( 'on-hold', $note );
+			if ( $subscription->can_be_updated_to( self::STATUS_DELAYED ) ) {
+				$subscription->update_status( self::STATUS_DELAYED, $note );
 			} else {
 				$subscription->save();
 				$subscription->add_order_note( $note );
@@ -139,7 +299,7 @@ final class RenewalStockGuard {
 			$subscription->save();
 			$subscription->add_order_note( $note );
 			$this->log_error(
-				'Renewal was blocked, but the subscription could not be moved to on-hold.',
+				'Renewal was blocked, but the subscription could not be moved to delayed.',
 				array(
 					'subscription_id' => $subscription_id,
 					'exception'       => $throwable,
@@ -233,7 +393,7 @@ final class RenewalStockGuard {
 			return;
 		}
 
-		if ( ! $subscription->has_status( array( 'active', 'on-hold' ) ) ) {
+		if ( ! $subscription->has_status( array( 'active', self::STATUS_DELAYED, 'on-hold' ) ) ) {
 			$this->clear_blocked_metadata( $subscription );
 			return;
 		}
@@ -241,6 +401,7 @@ final class RenewalStockGuard {
 		$unavailable_items = $this->get_unavailable_item_names( $subscription );
 
 		if ( ! empty( $unavailable_items ) ) {
+			$subscription->delete_meta_data( self::META_RECOVERY_ATTEMPTS );
 			$subscription->update_meta_data( self::META_UNAVAILABLE_ITEMS, $unavailable_items );
 			$subscription->save();
 			return;
@@ -249,9 +410,9 @@ final class RenewalStockGuard {
 		$this->recovering_subscription_ids[ $subscription_id ] = true;
 
 		try {
-			$current_status = $subscription->get_status();
 			$order_note     = __( 'Stock is available. Creating the delayed renewal order.', 'stock-guard-for-woocommerce-subscriptions' );
 			$renewal_order  = false;
+			$current_status = $subscription->get_status();
 
 			if ( is_callable( array( WC_Subscriptions_Manager::class, 'process_renewal' ) ) ) {
 				$renewal_order = WC_Subscriptions_Manager::process_renewal( $subscription_id, $current_status, $order_note );
@@ -262,6 +423,7 @@ final class RenewalStockGuard {
 			}
 
 			if ( $renewal_order instanceof WP_Error ) {
+				$this->handle_failed_recovery( $subscription );
 				$this->log_error(
 					'WooCommerce Subscriptions could not create the delayed renewal order.',
 					array(
@@ -273,6 +435,7 @@ final class RenewalStockGuard {
 			}
 
 			if ( ! $renewal_order instanceof WC_Order ) {
+				$this->handle_failed_recovery( $subscription );
 				$this->log_error(
 					'WooCommerce Subscriptions returned an invalid delayed renewal order.',
 					array( 'subscription_id' => $subscription_id )
@@ -281,6 +444,20 @@ final class RenewalStockGuard {
 			}
 
 			$this->clear_blocked_metadata( $subscription );
+
+			if (
+				$subscription->has_status( self::STATUS_DELAYED )
+				|| (
+					$subscription->has_status( 'on-hold' )
+					&& $subscription->payment_method_supports( 'gateway_scheduled_payments' )
+				)
+			) {
+				$subscription->update_status(
+					'active',
+					__( 'Stock is available and the delayed renewal order was created. The subscription has resumed.', 'stock-guard-for-woocommerce-subscriptions' )
+				);
+			}
+
 			$subscription->add_order_note(
 				sprintf(
 					/* translators: %s: renewal order number. */
@@ -291,6 +468,7 @@ final class RenewalStockGuard {
 
 			$this->process_recovered_renewal_payment( $renewal_order, $subscription );
 		} catch ( Throwable $throwable ) {
+			$this->handle_failed_recovery( $subscription );
 			$subscription->add_order_note(
 				__( 'Automatic renewal recovery could not be completed. Check the WooCommerce logs for details.', 'stock-guard-for-woocommerce-subscriptions' )
 			);
@@ -307,7 +485,7 @@ final class RenewalStockGuard {
 	}
 
 	/**
-	 * Clear stale plugin metadata after a subscription leaves on-hold status.
+	 * Clear stale plugin metadata after a subscription leaves a blocked status.
 	 *
 	 * @internal
 	 *
@@ -320,7 +498,7 @@ final class RenewalStockGuard {
 
 		if (
 			$subscription instanceof WC_Subscription
-			&& 'on-hold' !== $new_status
+			&& ! in_array( $new_status, array( self::STATUS_DELAYED, 'on-hold' ), true )
 			&& $subscription->get_meta( self::META_BLOCKED_AT, true )
 		) {
 			$this->clear_blocked_metadata( $subscription );
@@ -425,7 +603,7 @@ final class RenewalStockGuard {
 		$subscriptions = wcs_get_subscriptions(
 			array(
 				'subscriptions_per_page' => -1,
-				'subscription_status'    => array( 'active', 'on-hold' ),
+				'subscription_status'    => array( 'active', self::STATUS_DELAYED, 'on-hold' ),
 				'product_id'             => $product->get_id(),
 				'meta_query'             => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
 					array(
@@ -438,6 +616,8 @@ final class RenewalStockGuard {
 
 		foreach ( $subscriptions as $subscription ) {
 			if ( empty( $this->get_unavailable_item_names( $subscription ) ) ) {
+				$subscription->delete_meta_data( self::META_RECOVERY_ATTEMPTS );
+				$subscription->save();
 				$this->queue_recovery_action( $subscription->get_id() );
 			}
 		}
@@ -475,14 +655,40 @@ final class RenewalStockGuard {
 	}
 
 	/**
+	 * Queue a delayed retry after a recovery failure.
+	 *
+	 * @param int $subscription_id Subscription ID.
+	 */
+	private function queue_recovery_retry_action( $subscription_id ) {
+		$args      = array( absint( $subscription_id ) );
+		$timestamp = time() + self::RECOVERY_RETRY_DELAY;
+
+		if ( function_exists( 'as_schedule_single_action' ) ) {
+			$action_id = as_schedule_single_action( $timestamp, self::RECOVERY_ACTION, $args, self::ACTION_GROUP );
+
+			if ( 0 !== $action_id ) {
+				return;
+			}
+
+			$this->log_error(
+				'Action Scheduler could not queue a delayed renewal recovery retry.',
+				array( 'subscription_id' => $subscription_id )
+			);
+		}
+
+		$this->queue_wp_cron_recovery_action( $args, $subscription_id, self::RECOVERY_RETRY_DELAY );
+	}
+
+	/**
 	 * Use WP-Cron when Action Scheduler cannot queue the recovery.
 	 *
 	 * @param array<int> $args            Recovery action arguments.
 	 * @param int        $subscription_id Subscription ID.
+	 * @param int        $delay           Number of seconds before the action should run.
 	 */
-	private function queue_wp_cron_recovery_action( array $args, $subscription_id ) {
+	private function queue_wp_cron_recovery_action( array $args, $subscription_id, $delay = 1 ) {
 		if ( ! wp_next_scheduled( self::RECOVERY_ACTION, $args ) ) {
-			$result = wp_schedule_single_event( time() + 1, self::RECOVERY_ACTION, $args, true );
+			$result = wp_schedule_single_event( time() + absint( $delay ), self::RECOVERY_ACTION, $args, true );
 
 			if ( $result instanceof WP_Error ) {
 				$this->log_error(
@@ -579,12 +785,61 @@ final class RenewalStockGuard {
 	}
 
 	/**
+	 * Restore the delayed status and queue a bounded retry after recovery fails.
+	 *
+	 * @param WC_Subscription $subscription Subscription object.
+	 */
+	private function handle_failed_recovery( WC_Subscription $subscription ) {
+		if (
+			! $subscription->get_meta( self::META_BLOCKED_AT, true )
+			|| ! $subscription->has_status( array( 'active', self::STATUS_DELAYED, 'on-hold' ) )
+		) {
+			return;
+		}
+
+		try {
+			if ( ! $subscription->has_status( self::STATUS_DELAYED ) ) {
+				$subscription->update_status(
+					self::STATUS_DELAYED,
+					__( 'The renewal recovery attempt failed. The subscription remains delayed.', 'stock-guard-for-woocommerce-subscriptions' )
+				);
+			}
+
+			$recovery_attempts = absint( $subscription->get_meta( self::META_RECOVERY_ATTEMPTS, true ) ) + 1;
+			$subscription->update_meta_data( self::META_RECOVERY_ATTEMPTS, $recovery_attempts );
+			$subscription->save();
+
+			if ( self::MAX_RECOVERY_ATTEMPTS > $recovery_attempts ) {
+				$this->queue_recovery_retry_action( $subscription->get_id() );
+				return;
+			}
+
+			$subscription->add_order_note(
+				sprintf(
+					/* translators: %d: number of automatic recovery attempts. */
+					__( 'Automatic renewal recovery failed %d times and will pause until another relevant stock change.', 'stock-guard-for-woocommerce-subscriptions' ),
+					$recovery_attempts
+				)
+			);
+		} catch ( Throwable $throwable ) {
+			$this->log_error(
+				'The failed renewal recovery could not be rescheduled.',
+				array(
+					'subscription_id' => $subscription->get_id(),
+					'exception'       => $throwable,
+				)
+			);
+		}
+	}
+
+	/**
 	 * Remove metadata used to identify a plugin-blocked renewal.
 	 *
 	 * @param WC_Subscription $subscription Subscription object.
 	 */
 	private function clear_blocked_metadata( WC_Subscription $subscription ) {
 		$subscription->delete_meta_data( self::META_BLOCKED_AT );
+		$subscription->delete_meta_data( self::META_RECOVERY_ATTEMPTS );
 		$subscription->delete_meta_data( self::META_UNAVAILABLE_ITEMS );
 		$subscription->save();
 	}

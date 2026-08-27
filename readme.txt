@@ -14,7 +14,7 @@ This plugin checks every item before WooCommerce Subscriptions creates a schedul
 If an item is out of stock, or there is not enough managed stock for the subscription quantity, the plugin:
 
 * Stops the renewal before order creation and payment processing.
-* Moves the subscription to on-hold when the payment method supports suspension.
+* Moves the subscription to a dedicated delayed status while stock is unavailable.
 * Adds an audit note to the subscription.
 * Sends the customer a configurable WooCommerce email.
 

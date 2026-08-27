@@ -10,7 +10,7 @@ This is an independent extension and is not affiliated with or endorsed by WooCo
 - Detects products that are out of stock, missing, or unable to satisfy the subscription quantity.
 - Accounts for variations and products that share managed stock with a parent product.
 - Respects backorders when they are enabled for a product.
-- Places the affected subscription on hold when its payment method supports suspension.
+- Moves the affected subscription to a dedicated `delayed` status while stock is unavailable.
 - Adds audit notes to the subscription when a renewal is delayed or recovered.
 - Sends the customer a configurable WooCommerce email when the renewal is delayed.
 - Rechecks the complete subscription when relevant product stock changes.
@@ -39,10 +39,10 @@ The plugin has no separate settings page. It starts monitoring scheduled subscri
 1. WooCommerce Subscriptions starts a scheduled renewal.
 2. The plugin checks the current availability of every product on the subscription before the renewal order is created.
 3. If any item is unavailable, the plugin stops renewal-order creation and payment processing for that attempt.
-4. The subscription is moved to `on-hold` when the payment method supports that status change. Otherwise, the subscription remains active but is marked as blocked by the plugin.
+4. The subscription is moved to the `delayed` status and marked as blocked by the plugin.
 5. The plugin records the unavailable items, adds a subscription note, and sends the delayed-renewal email once.
 6. A relevant stock or stock-management change queues a unique asynchronous recovery check.
-7. The recovery job checks every subscription item again. It creates the delayed renewal order only when the complete subscription can be fulfilled.
+7. The recovery job checks every subscription item again. Once the complete subscription can be fulfilled, it returns the subscription to WooCommerce Subscriptions' normal renewal flow and creates the delayed renewal order.
 
 The blocked marker is removed only after WooCommerce Subscriptions successfully returns a valid renewal order.
 
@@ -87,7 +87,7 @@ your-theme/woocommerce/emails/plain/customer-renewal-delayed.php
 
 ## Scheduled actions and logs
 
-Recovery jobs use the action hook `sgfws_process_stock_recovered_renewal` and the Action Scheduler group `stock_guard_for_woocommerce_subscriptions`. If Action Scheduler cannot queue a job, the plugin schedules the same recovery through WP-Cron.
+Recovery jobs use the action hook `sgfws_process_stock_recovered_renewal` and the Action Scheduler group `stock_guard_for_woocommerce_subscriptions`. If Action Scheduler cannot queue a job, the plugin schedules the same recovery through WP-Cron. A failed recovery is retried up to two more times at five-minute intervals; a later relevant stock change resets that retry limit.
 
 To inspect queued or failed jobs, open **WooCommerce > Status > Scheduled Actions** and search for the recovery hook.
 
