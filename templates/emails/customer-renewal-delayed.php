@@ -6,19 +6,22 @@
  * @version 1.0.0
  */
 
+use Automattic\WooCommerce\Utilities\FeaturesUtil;
+
 defined( 'ABSPATH' ) || exit;
 
 if ( ! $subscription instanceof WC_Subscription ) {
 	return;
 }
 
-do_action( 'woocommerce_email_header', $email_heading, $email );
+$email_improvements_enabled = FeaturesUtil::feature_is_enabled( 'email_improvements' );
 
-$first_name = $subscription->get_billing_first_name();
-?>
+do_action( 'woocommerce_email_header', $email_heading, $email ); ?>
 
+<?php echo $email_improvements_enabled ? '<div class="email-introduction">' : ''; ?>
 <p>
 	<?php
+	$first_name = $subscription->get_billing_first_name();
 	if ( $first_name ) {
 		printf(
 			/* translators: %s: customer's first name. */
@@ -40,6 +43,7 @@ $first_name = $subscription->get_billing_first_name();
 	);
 	?>
 </p>
+<?php echo $email_improvements_enabled ? '</div>' : ''; ?>
 
 <?php if ( $unavailable_items ) : ?>
 	<ul>
@@ -59,10 +63,12 @@ $first_name = $subscription->get_billing_first_name();
 	</a>
 </p>
 
-<?php if ( $additional_content ) : ?>
-	<div class="email-additional-content">
-		<?php echo wp_kses_post( wpautop( wptexturize( $additional_content ) ) ); ?>
-	</div>
-<?php endif; ?>
+<?php
+if ( $additional_content ) {
+	echo $email_improvements_enabled ? '<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation"><tr><td class="email-additional-content">' : '';
+	echo wp_kses_post( wpautop( wptexturize( $additional_content ) ) );
+	echo $email_improvements_enabled ? '</td></tr></table>' : '';
+}
+?>
 
 <?php do_action( 'woocommerce_email_footer', $email ); ?>
