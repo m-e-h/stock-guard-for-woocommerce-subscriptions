@@ -18,6 +18,7 @@ defined( 'ABSPATH' ) || exit;
  * Notifies a customer that an out-of-stock item delayed a renewal.
  */
 final class CustomerRenewalDelayed extends WC_Email {
+	private const META_UNAVAILABLE_ITEMS = '_sgfws_unavailable_items';
 
 	/**
 	 * Create the email.
@@ -41,8 +42,37 @@ final class CustomerRenewalDelayed extends WC_Email {
 		);
 
 		add_action( 'sgfws_subscription_renewal_delayed_notification', array( $this, 'trigger' ), 10, 2 );
+		add_filter( 'woocommerce_prepare_email_for_preview', array( $this, 'handle_woocommerce_prepare_email_for_preview' ) );
 
 		parent::__construct();
+	}
+
+	/**
+	 * Supply subscription data when WooCommerce prepares this email for preview.
+	 *
+	 * @internal
+	 *
+	 * @param WC_Email $email Email being previewed.
+	 * @return WC_Email
+	 */
+	public function handle_woocommerce_prepare_email_for_preview( $email ) {
+		if ( $email !== $this ) {
+			return $email;
+		}
+
+		$subscription      = new WC_Subscription();
+		$unavailable_items = array( __( 'Example subscription product', 'stock-guard-for-woocommerce-subscriptions' ) );
+
+		$subscription->set_id( 12346 );
+		$subscription->set_billing_first_name( 'John' );
+		$subscription->set_billing_email( 'customer@example.com' );
+		$subscription->update_meta_data( self::META_UNAVAILABLE_ITEMS, $unavailable_items );
+
+		$email->set_object( $subscription );
+		$email->placeholders['{subscription_number}'] = $subscription->get_order_number();
+		$email->placeholders['{unavailable_items}']   = implode( ', ', $unavailable_items );
+
+		return $email;
 	}
 
 	/**
@@ -171,7 +201,7 @@ final class CustomerRenewalDelayed extends WC_Email {
 			return array();
 		}
 
-		$items = $this->object->get_meta( '_sgfws_unavailable_items', true );
+		$items = $this->object->get_meta( self::META_UNAVAILABLE_ITEMS, true );
 
 		return is_array( $items ) ? array_map( 'strval', $items ) : array();
 	}

@@ -113,7 +113,8 @@ final class Plugin {
 	public function handle_woocommerce_email_classes( $email_classes ) {
 		require_once __DIR__ . '/emails/class-customer-renewal-delayed.php';
 
-		$email_classes[ CustomerRenewalDelayed::class ] = new CustomerRenewalDelayed(
+		// WooCommerce uses this key as a settings section slug, so it cannot contain namespace separators.
+		$email_classes['SGFWS_Customer_Subscription_Renewal_Delayed'] = new CustomerRenewalDelayed(
 			dirname( $this->plugin_file ) . '/templates/'
 		);
 
