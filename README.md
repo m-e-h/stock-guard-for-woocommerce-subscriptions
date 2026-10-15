@@ -23,7 +23,7 @@ This is an independent extension and is not affiliated with or endorsed by WooCo
 - WordPress 6.7 or later
 - PHP 7.4 or later
 - WooCommerce
-- WooCommerce Subscriptions
+- [WooCommerce Subscriptions](https://woocommerce.com/products/woocommerce-subscriptions/) (a separate commercial extension, not included)
 
 ## Installation
 
@@ -63,7 +63,7 @@ Payment handling follows the subscription's renewal configuration:
 | Renewal type | Behavior after stock recovery |
 | --- | --- |
 | Automatic renewal | The plugin creates the renewal order and asks WooCommerce Subscriptions to trigger the gateway's renewal-payment hook. |
-| Manual renewal | WooCommerce Subscriptions creates the renewal order and uses its normal manual-renewal invoice flow. |
+| Manual renewal | WooCommerce Subscriptions creates the renewal invoice. The subscription remains on hold until payment. |
 | Gateway-scheduled renewal | The plugin creates the renewal order, but the external gateway remains responsible for collecting payment. |
 | Renewal that does not need payment | The renewal order is created without calling a payment gateway. |
 
@@ -157,8 +157,35 @@ Run PHP syntax checks and WordPress Coding Standards against the plugin before r
 ```bash
 find . -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 phpcs --standard=WordPress --exclude=WordPress.Files.FileName .
-markdownlint README.md
+phpcs --standard=PHPCompatibilityWP --runtime-set testVersion 7.4- --extensions=php .
 ```
+
+Run Plugin Check against the extracted release as described below. A scan of the development directory also reports intentionally excluded files such as the build script and ZIP. On Local sites, run WP-CLI through the site's configured environment.
+
+## Build and submit a release
+
+Run the release builder from the plugin directory:
+
+```bash
+bash bin/build-release.sh
+```
+
+The builder checks that the plugin version matches the readme's stable tag. It creates `dist/stock-guard-for-woocommerce-subscriptions-1.0.0.zip` with only the plugin bootstrap, includes, templates, directory readme, and license. Git files, development documentation, tests, and build tools are excluded. `.distignore` provides the same exclusions for tools such as `wp dist-archive`.
+
+Check the ZIP itself before uploading it:
+
+```bash
+release_check_dir="$(mktemp -d)"
+unzip -q ./dist/stock-guard-for-woocommerce-subscriptions-1.0.0.zip -d "$release_check_dir"
+wp plugin check "$release_check_dir/stock-guard-for-woocommerce-subscriptions" --slug=stock-guard-for-woocommerce-subscriptions
+wp plugin check stock-guard-for-woocommerce-subscriptions --require=../plugin-check/cli.php
+```
+
+The second Plugin Check command adds runtime checks against the installed plugin, which must match the packaged code. It also scans the development files described above. It requires this plugin, WooCommerce, WooCommerce Subscriptions, and Plugin Check to be installed and active on a local test site. Resolve the Plugin Check loader relative to the plugin directory, or use its absolute path. If specifying `--path`, place it after `plugin check` so Plugin Check can recognize the command during early initialization.
+
+Submit the ZIP through [Add Your Plugin](https://wordpress.org/plugins/developers/add/). After approval, place the ZIP contents in SVN `trunk/` and tag the same contents as `tags/1.0.0/`. Directory banners, icons, and screenshots belong in SVN `assets/`, outside the installable plugin. Keep the header version, readme stable tag, and release tag in sync for later releases.
+
+Before deactivating the plugin, resolve any delayed subscriptions. Deactivation stops recovery, and the plugin retains subscription notes, renewal metadata, and WooCommerce email settings when deleted.
 
 ## License
 

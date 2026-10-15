@@ -1,0 +1,7 @@
+/.git
+/.gitignore
+/.distignore
+/README.md
+/bin
+/dist
+/tests

@@ -26,7 +26,6 @@ defined( 'ABSPATH' ) || exit;
 final class RenewalStockGuard {
 
 	private const ACTION_GROUP           = 'stock_guard_for_woocommerce_subscriptions';
-	private const EMAIL_ACTION           = 'sgfws_subscription_renewal_delayed_notification';
 	private const LOG_SOURCE             = 'stock-guard-for-woocommerce-subscriptions';
 	private const MAX_RECOVERY_ATTEMPTS  = 3;
 	private const META_BLOCKED_AT        = '_sgfws_renewal_blocked_at';
@@ -446,11 +445,9 @@ final class RenewalStockGuard {
 			$this->clear_blocked_metadata( $subscription );
 
 			if (
-				$subscription->has_status( self::STATUS_DELAYED )
-				|| (
-					$subscription->has_status( 'on-hold' )
-					&& $subscription->payment_method_supports( 'gateway_scheduled_payments' )
-				)
+				! $subscription->is_manual()
+				&& $subscription->payment_method_supports( 'gateway_scheduled_payments' )
+				&& $subscription->has_status( array( self::STATUS_DELAYED, 'on-hold' ) )
 			) {
 				$subscription->update_status(
 					'active',
@@ -781,7 +778,8 @@ final class RenewalStockGuard {
 		 *
 		 * @since 1.0.0
 		 */
-		do_action( self::EMAIL_ACTION, $subscription, $unavailable_items );
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- sgfws is the plugin's documented hook prefix.
+		do_action( 'sgfws_subscription_renewal_delayed_notification', $subscription, $unavailable_items );
 	}
 
 	/**

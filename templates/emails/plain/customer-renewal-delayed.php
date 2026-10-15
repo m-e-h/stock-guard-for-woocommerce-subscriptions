@@ -14,13 +14,14 @@ if ( ! $subscription instanceof WC_Subscription ) {
 
 echo '= ' . esc_html( $email_heading ) . " =\n\n";
 
-$first_name = $subscription->get_billing_first_name();
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- Uses the plugin's sgfws prefix within wc_get_template() scope.
+$sgfws_first_name = $subscription->get_billing_first_name();
 
-if ( $first_name ) {
+if ( $sgfws_first_name ) {
 	printf(
 		/* translators: %s: customer's first name. */
 		esc_html__( 'Hi %s,', 'stock-guard-for-woocommerce-subscriptions' ),
-		esc_html( $first_name )
+		esc_html( $sgfws_first_name )
 	);
 } else {
 	esc_html_e( 'Hello,', 'stock-guard-for-woocommerce-subscriptions' );
@@ -36,8 +37,9 @@ printf(
 
 echo "\n\n";
 
-foreach ( $unavailable_items as $item_name ) {
-	echo '- ' . esc_html( $item_name ) . "\n";
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- Uses the plugin's sgfws prefix within wc_get_template() scope.
+foreach ( $unavailable_items as $sgfws_item_name ) {
+	echo '- ' . esc_html( $sgfws_item_name ) . "\n";
 }
 
 echo "\n";
@@ -55,4 +57,5 @@ if ( $additional_content ) {
 }
 
 echo "\n\n";
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- WooCommerce's shared email footer.
 echo wp_kses_post( apply_filters( 'woocommerce_email_footer_text', get_option( 'woocommerce_email_footer_text' ) ) );

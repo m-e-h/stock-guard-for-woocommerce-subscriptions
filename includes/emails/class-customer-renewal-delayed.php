@@ -68,7 +68,7 @@ final class CustomerRenewalDelayed extends WC_Email {
 		$subscription->set_billing_email( 'customer@example.com' );
 		$subscription->update_meta_data( self::META_UNAVAILABLE_ITEMS, $unavailable_items );
 
-		$email->set_object( $subscription );
+		$email->object                                = $subscription;
 		$email->placeholders['{subscription_number}'] = $subscription->get_order_number();
 		$email->placeholders['{unavailable_items}']   = implode( ', ', $unavailable_items );
 
@@ -129,7 +129,11 @@ final class CustomerRenewalDelayed extends WC_Email {
 			$this->placeholders['{subscription_number}'] = $subscription->get_order_number();
 			$this->placeholders['{unavailable_items}']   = implode( ', ', array_map( 'wp_strip_all_tags', $unavailable_items ) );
 
-			if ( $this->send_notification() ) {
+			if (
+				$this->is_enabled()
+				&& $this->get_recipient()
+				&& $this->send( $this->get_recipient(), $this->get_subject(), $this->get_content(), $this->get_headers(), $this->get_attachments() )
+			) {
 				$subscription->add_order_note(
 					sprintf(
 						/* translators: %s: customer email address. */

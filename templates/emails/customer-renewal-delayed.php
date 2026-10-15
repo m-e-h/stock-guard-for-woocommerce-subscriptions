@@ -14,19 +14,25 @@ if ( ! $subscription instanceof WC_Subscription ) {
 	return;
 }
 
-$email_improvements_enabled = FeaturesUtil::feature_is_enabled( 'email_improvements' );
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- Uses the plugin's sgfws prefix within wc_get_template() scope.
+$sgfws_email_improvements_enabled = class_exists( FeaturesUtil::class )
+	&& is_callable( array( FeaturesUtil::class, 'feature_is_enabled' ) )
+	&& FeaturesUtil::feature_is_enabled( 'email_improvements' );
 
+// Use WooCommerce's shared email header and footer hooks.
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
 do_action( 'woocommerce_email_header', $email_heading, $email ); ?>
 
-<?php echo $email_improvements_enabled ? '<div class="email-introduction">' : ''; ?>
+<?php echo $sgfws_email_improvements_enabled ? '<div class="email-introduction">' : ''; ?>
 <p>
 	<?php
-	$first_name = $subscription->get_billing_first_name();
-	if ( $first_name ) {
+	// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- Uses the plugin's sgfws prefix within wc_get_template() scope.
+	$sgfws_first_name = $subscription->get_billing_first_name();
+	if ( $sgfws_first_name ) {
 		printf(
 			/* translators: %s: customer's first name. */
 			esc_html__( 'Hi %s,', 'stock-guard-for-woocommerce-subscriptions' ),
-			esc_html( $first_name )
+			esc_html( $sgfws_first_name )
 		);
 	} else {
 		esc_html_e( 'Hello,', 'stock-guard-for-woocommerce-subscriptions' );
@@ -38,23 +44,24 @@ do_action( 'woocommerce_email_header', $email_heading, $email ); ?>
 	<?php
 	printf(
 		/* translators: %s: subscription number. */
-		esc_html__( 'We could not process the renewal for subscription #%s because the following items are currently out of stock:', 'stock-guard-for-woocommerce-subscriptions' ),
+		esc_html__( 'We could not process the renewal for subscription #%s because the following items are currently unavailable:', 'stock-guard-for-woocommerce-subscriptions' ),
 		esc_html( $subscription->get_order_number() )
 	);
 	?>
 </p>
-<?php echo $email_improvements_enabled ? '</div>' : ''; ?>
+<?php echo $sgfws_email_improvements_enabled ? '</div>' : ''; ?>
 
 <?php if ( $unavailable_items ) : ?>
 	<ul>
-		<?php foreach ( $unavailable_items as $item_name ) : ?>
-			<li><?php echo esc_html( $item_name ); ?></li>
+		<?php // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- Uses the plugin's sgfws prefix within wc_get_template() scope. ?>
+		<?php foreach ( $unavailable_items as $sgfws_item_name ) : ?>
+			<li><?php echo esc_html( $sgfws_item_name ); ?></li>
 		<?php endforeach; ?>
 	</ul>
 <?php endif; ?>
 
 <p>
-	<?php esc_html_e( 'The store did not create a renewal order for this attempt. We will retry automatically once all items are back in stock, which we expect to be soon.', 'stock-guard-for-woocommerce-subscriptions' ); ?>
+	<?php esc_html_e( 'The store did not create a renewal order for this attempt. We will retry automatically as soon as every item is available.', 'stock-guard-for-woocommerce-subscriptions' ); ?>
 </p>
 
 <p>
@@ -65,10 +72,12 @@ do_action( 'woocommerce_email_header', $email_heading, $email ); ?>
 
 <?php
 if ( $additional_content ) {
-	echo $email_improvements_enabled ? '<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation"><tr><td class="email-additional-content">' : '';
+	echo $sgfws_email_improvements_enabled ? '<table border="0" cellpadding="0" cellspacing="0" width="100%" role="presentation"><tr><td class="email-additional-content">' : '';
 	echo wp_kses_post( wpautop( wptexturize( $additional_content ) ) );
-	echo $email_improvements_enabled ? '</td></tr></table>' : '';
+	echo $sgfws_email_improvements_enabled ? '</td></tr></table>' : '';
 }
 ?>
 
-<?php do_action( 'woocommerce_email_footer', $email ); ?>
+<?php
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- WooCommerce's shared email footer.
+do_action( 'woocommerce_email_footer', $email );
