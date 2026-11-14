@@ -5,3 +5,13 @@
 /bin
 /dist
 /tests
+/vendor
+/node_modules
+/.cache
+/composer.json
+/composer.lock
+/package.json
+/package-lock.json
+/phpunit.xml.dist
+/.phpunit.result.cache
+/PLAN_TESTS.md

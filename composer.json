@@ -1,0 +1,38 @@
+{
+	"name": "m-e-h/stock-guard-for-woocommerce-subscriptions",
+	"description": "Pauses WooCommerce subscription renewals when stock is unavailable and retries them when stock returns.",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=7.4"
+	},
+	"require-dev": {
+		"phpunit/phpunit": "^9.6",
+		"wp-phpunit/wp-phpunit": "^7.1",
+		"yoast/phpunit-polyfills": "^4.0"
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"StockGuardForWooCommerceSubscriptions\\Tests\\": "tests/php/"
+		}
+	},
+	"config": {
+		"sort-packages": true,
+		"platform": {
+			"php": "7.4.33"
+		}
+	},
+	"scripts": {
+		"test": [
+			"@test:hpos",
+			"@test:legacy",
+			"@test:concurrency"
+		],
+		"test:hpos": "SGFWS_TESTS_HPOS=1 phpunit --exclude-group concurrency",
+		"test:legacy": "SGFWS_TESTS_HPOS=0 phpunit --exclude-group concurrency",
+		"test:concurrency": [
+			"SGFWS_TESTS_HPOS=1 phpunit --group concurrency",
+			"SGFWS_TESTS_HPOS=0 phpunit --group concurrency"
+		]
+	}
+}

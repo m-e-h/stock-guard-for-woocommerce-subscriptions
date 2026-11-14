@@ -1,0 +1,56 @@
+{
+	"$schema": "https://playground.wordpress.net/blueprint-schema.json",
+	"meta": {
+		"title": "Stock Guard for WooCommerce Subscriptions E2E",
+		"author": "m-e-h"
+	},
+	"preferredVersions": {
+		"php": "8.2",
+		"wp": "latest"
+	},
+	"features": {
+		"networking": false
+	},
+	"constants": {
+		"WP_DEBUG": true,
+		"WP_DEBUG_DISPLAY": false,
+		"WP_DEBUG_LOG": "/wordpress/wp-content/sgfws-e2e-logs/debug.log",
+		"DISABLE_WP_CRON": true,
+		"SGFWS_E2E_KEY": "sgfws-e2e-local-key"
+	},
+	"steps": [
+		{
+			"step": "activatePlugin",
+			"pluginPath": "woocommerce/woocommerce.php"
+		},
+		{
+			"step": "activatePlugin",
+			"pluginPath": "woocommerce-subscriptions/woocommerce-subscriptions.php"
+		},
+		{
+			"step": "activatePlugin",
+			"pluginPath": "stock-guard-for-woocommerce-subscriptions/stock-guard-for-woocommerce-subscriptions.php"
+		},
+		{
+			"step": "setSiteOptions",
+			"options": {
+				"blogname": "Stock Guard E2E",
+				"permalink_structure": "/%postname%/",
+				"woocommerce_coming_soon": "no",
+				"woocommerce_store_pages_only": "no",
+				"woocommerce_onboarding_profile": {
+					"skipped": true
+				},
+				"woocommerce_task_list_hidden": "yes",
+				"woocommerce_show_marketplace_suggestions": "no",
+				"woocommerce_allow_tracking": "no",
+				"woocommerce_default_country": "US:CA",
+				"woocommerce_currency": "USD"
+			}
+		},
+		{
+			"step": "runPHP",
+			"code": "<?php require '/wordpress/wp-load.php'; WC_Install::newly_installed(); WC_Install::create_pages(); WCS_Staging::set_duplicate_site_url_lock(); flush_rewrite_rules();"
+		}
+	]
+}

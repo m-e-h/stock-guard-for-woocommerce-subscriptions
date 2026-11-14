@@ -162,6 +162,49 @@ phpcs --standard=PHPCompatibilityWP --runtime-set testVersion 7.4- --extensions=
 
 Run Plugin Check against the extracted release as described below. A scan of the development directory also reports intentionally excluded files such as the build script and ZIP. On Local sites, run WP-CLI through the site's configured environment.
 
+## Automated tests
+
+The suites need local copies of WooCommerce and WooCommerce Subscriptions. By default they use the plugins next to this one in `wp-content/plugins/`.
+
+### PHPUnit integration tests
+
+The PHP suite runs against real WordPress, WooCommerce, WooCommerce Subscriptions, and Action Scheduler objects in a disposable MySQL database. It covers renewal blocking and recovery, the stock rules, duplicate and failed recovery jobs, payment routing, and the delayed-renewal email.
+
+```bash
+composer install
+composer test              # HPOS, then posts storage, then the concurrency test
+composer test:hpos         # One storage mode only
+composer test:legacy
+composer test:concurrency  # Two PHP workers race to recover one subscription
+```
+
+On Local, run the commands through the site environment so PHP can reach Local's MySQL socket, for example `direnv exec ../../.. composer test`.
+
+The suite creates a database named `sgfws_tests` by default and drops its `wptests_` tables at the start of every run. It refuses to run against a database named `local` or `wordpress`. Use these environment variables to change the defaults:
+
+| Variable | Default |
+| --- | --- |
+| `SGFWS_TESTS_DB_NAME` | `sgfws_tests` |
+| `SGFWS_TESTS_DB_USER` / `SGFWS_TESTS_DB_PASSWORD` | `root` / `root` |
+| `SGFWS_TESTS_DB_HOST` | Local's MySQL socket when `MYSQL_HOME` is set, otherwise `localhost` |
+| `SGFWS_TESTS_WP_DIR` | The WordPress install that contains this plugin |
+| `SGFWS_TESTS_PLUGINS_DIR` | The parent `plugins` directory |
+| `SGFWS_TESTS_HPOS` | `1` (HPOS), or `0` for posts storage |
+
+### Playwright browser tests
+
+The browser suite starts a disposable [WordPress Playground](https://wordpress.github.io/wordpress-playground/) site, mounts WooCommerce, WooCommerce Subscriptions, and this plugin, and loads a fixture must-use plugin from `tests/e2e/fixtures/`. The fixture adds REST routes that create a subscription, run its renewal, restock it, and run the recovery job, so the tests don't have to wait for scheduled work.
+
+```bash
+npm install
+npx playwright install chromium
+npm run e2e
+```
+
+Set `SGFWS_E2E_PLUGINS_DIR` to use WooCommerce and WooCommerce Subscriptions from another directory. PHP errors from the Playground site are logged to `.cache/e2e-logs/debug.log`.
+
+On Local, run `npm run e2e` from a shell that has not loaded the site's environment. Local's `LD_LIBRARY_PATH` breaks Chromium (`env -u LD_LIBRARY_PATH npm run e2e` also works).
+
 ## Build and submit a release
 
 Run the release builder from the plugin directory:

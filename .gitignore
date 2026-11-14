@@ -6,9 +6,12 @@ node_modules/
 *.sql
 *.tar.gz
 *.zip
+/vendor
 /node_modules
 *.map
-*.lock
+/composer.lock
 /.cache*
 *.code-workspace
 /dist/
+*.cache
+.phpunit.result.cache
