@@ -788,14 +788,27 @@ final class RenewalStockGuard {
 	 * @param WC_Subscription $subscription Subscription object.
 	 */
 	private function handle_failed_recovery( WC_Subscription $subscription ) {
-		if (
-			! $subscription->get_meta( self::META_BLOCKED_AT, true )
-			|| ! $subscription->has_status( array( 'active', self::STATUS_DELAYED, 'on-hold' ) )
-		) {
-			return;
-		}
+		$subscription_id = $subscription->get_id();
 
 		try {
+			// process_renewal() updates its own subscription instance, so the caller's state may be stale.
+			$subscription = wcs_get_subscription( $subscription_id );
+
+			if ( ! $subscription instanceof WC_Subscription ) {
+				$this->log_error(
+					'The subscription could not be reloaded after a failed renewal recovery.',
+					array( 'subscription_id' => $subscription_id )
+				);
+				return;
+			}
+
+			if (
+				! $subscription->get_meta( self::META_BLOCKED_AT, true )
+				|| ! $subscription->has_status( array( 'active', self::STATUS_DELAYED, 'on-hold' ) )
+			) {
+				return;
+			}
+
 			if ( ! $subscription->has_status( self::STATUS_DELAYED ) ) {
 				$subscription->update_status(
 					self::STATUS_DELAYED,
@@ -823,7 +836,7 @@ final class RenewalStockGuard {
 			$this->log_error(
 				'The failed renewal recovery could not be rescheduled.',
 				array(
-					'subscription_id' => $subscription->get_id(),
+					'subscription_id' => $subscription_id,
 					'exception'       => $throwable,
 				)
 			);

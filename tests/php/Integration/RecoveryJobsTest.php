@@ -87,6 +87,70 @@ final class RecoveryJobsTest extends TestCase {
 	}
 
 	/**
+	 * @testdox Failed recovery does not mutate stale state when the subscription reload fails.
+	 * @dataProvider provide_subscription_reload_failures
+	 *
+	 * @param bool   $throw_on_reload Whether reloading throws instead of returning false.
+	 * @param string $expected_error  Expected failure-handling log message.
+	 */
+	public function test_failed_recovery_stops_when_the_subscription_cannot_be_reloaded( bool $throw_on_reload, string $expected_error ): void {
+		list( $product, $subscription ) = $this->create_blocked_subscription();
+		$subscription_id                = $subscription->get_id();
+		$blocked_at                     = $subscription->get_meta( self::META_BLOCKED_AT );
+		$fail_reload                    = static function ( $candidate ) use ( $subscription_id, $throw_on_reload ) {
+			if ( $candidate instanceof WC_Subscription && $candidate->get_id() === $subscription_id ) {
+				if ( $throw_on_reload ) {
+					throw new RuntimeException( 'Simulated subscription reload failure.' );
+				}
+
+				return false;
+			}
+
+			return $candidate;
+		};
+
+		$this->set_stock( $product, 5 );
+
+		// Fail the reload only after Subscriptions has persisted on-hold and order creation fails.
+		add_filter(
+			'wcs_new_order_types',
+			static function () use ( $fail_reload ) {
+				add_filter( 'wcs_get_subscription', $fail_reload );
+				throw new RuntimeException( 'Simulated order creation failure.' );
+			}
+		);
+
+		try {
+			$this->run_pending_recovery_actions();
+		} finally {
+			remove_filter( 'wcs_get_subscription', $fail_reload );
+		}
+
+		$stored_subscription = $this->reload( $subscription_id );
+
+		$this->assertSame( 'on-hold', $stored_subscription->get_status(), 'Failed reload must not cause a status update from stale state.' );
+		$this->assertSame( $blocked_at, $stored_subscription->get_meta( self::META_BLOCKED_AT ) );
+		$this->assertSame( array( 'Coffee beans' ), $stored_subscription->get_meta( self::META_UNAVAILABLE_ITEMS ) );
+		$this->assertEmpty( $stored_subscription->get_meta( self::META_RECOVERY_ATTEMPTS ), 'Failed reload must not increment the attempt counter.' );
+		$this->assertSame( array(), $this->pending_recovery_ids( $subscription_id ) );
+		$this->assertFalse( wp_next_scheduled( self::RECOVERY_ACTION, array( $subscription_id ) ) );
+		$this->assertSame( array(), $this->renewal_order_ids( $subscription_id ) );
+		$this->assertGatewayDispatches( 0 );
+		$this->assertSame( array( $expected_error, 'Automatic renewal recovery failed.' ), $this->logged_errors() );
+		$this->assertSame( $subscription_id, $this->logger->entries_for( self::LOG_SOURCE )[0]['context']['subscription_id'] );
+	}
+
+	/**
+	 * @return array<string,array{0:bool,1:string}>
+	 */
+	public function provide_subscription_reload_failures(): array {
+		return array(
+			'subscription unavailable' => array( false, 'The subscription could not be reloaded after a failed renewal recovery.' ),
+			'reload throws'           => array( true, 'The failed renewal recovery could not be rescheduled.' ),
+		);
+	}
+
+	/**
 	 * @return array<string,array{0:string,1:callable,2:string}>
 	 */
 	public function provide_order_creation_failures(): array {
